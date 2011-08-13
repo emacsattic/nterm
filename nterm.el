@@ -1,22 +1,23 @@
+;; -*-coding: utf-8 -*-
 ;;; nterm.el --- New TERMinal emulator
 
-;; Copyright (C) 2009 Ivan Kanis
+;; Copyright (C) 2009, 2010 Ivan Kanis
 
 ;; Author: Ivan Kanis <look-for-me@your-favorite-search.engine>
 ;; Maintainer: Ivan Kanis <look-for-me@your-favorite-search.engine>
 ;; Created: 1 Oct 2009
-;; Version: 0.2
+;; Version: 0.3
 ;; Keywords: terminal shell
 
 ;; This file is not part of GNU Emacs.
 
 ;;; Commentary:
-;; Copyright is a the bottome of this file
+;; Copyright is at the bottom of this file
 
 ;; Disclaimer: nterm is *alpha* software. It will blow up. Don't blame
 ;; me, I warned you! A good terminal emulator architecture has display
 ;; memory and a table of functions for each character coming in. I
-;; have been int the terminal emulation business for seven years so I
+;; have been in the terminal emulation business for seven years so I
 ;; ought to know.
 
 ;; Nterm is meant to be a full vt100 compatible terminal emulator. It
@@ -62,9 +63,6 @@
 ;; terminal. Someone can easily reproduce a bug by replaying the trace
 ;; both on xterm and nterm.
 
-;; It's not complete yet but it passes the first three tests of
-;; vttest. I will get back to it when I have time.
-
 ;; The latest version is at http://kanis.fr/hg/lisp/ivan/nterm.el
 
 ;; FAQ
@@ -72,7 +70,6 @@
 ;; users can't choose, say, utf-8?
 ;; A: Nope, it's vt100 character set, 8 bit character are just ignored
 ;; for now
-
 
 ;;; THANKS:
 
@@ -125,26 +122,15 @@
     list)
   "Map single width character to unicode double width equivalent.")
 
+(defvar nterm-unit-testing nil
+  "True when doing unit testing")
+
 ;;; Debugging
-(defvar nterm-debug (make-bool-vector 5 nil)
-  "Debugging bool vector")
-
-(defvar nterm-debug-emulator 0)
-(defvar nterm-debug-vt100 1)
-(defvar nterm-debug-cursor 2)
-(defvar nterm-debug-ansi 3)
-(defvar nterm-debug-vt52 4)
-;; (aset nterm-debug nterm-debug-emulator t)
-;; (aset nterm-debug nterm-debug-emulator nil)
-;; (aset nterm-debug nterm-debug-vt100 t)
-;; (aset nterm-debug nterm-debug-vt100 nil)
-;; (aset nterm-debug nterm-debug-cursor t)
-;; (aset nterm-debug nterm-debug-cursor nil)
-;; (aset nterm-debug nterm-debug-ansi t)
-;; (aset nterm-debug nterm-debug-ansi nil)
-;; (aset nterm-debug nterm-debug-vt52 t)
-;; (aset nterm-debug nterm-debug-vt52 nil)
-
+(defvar nterm-debug-emulator nil)
+(defvar nterm-debug-vt100 nil)
+(defvar nterm-debug-cursor nil)
+(defvar nterm-debug-ansi nil)
+(defvar nterm-debug-vt52 nil)
 (defvar nterm-record-enable nil
   "Enable recording")
 
@@ -167,6 +153,10 @@
 (defvar nterm-blink-time 1
   "Time in second for blinking.
 Set to nil if you want to disable blinking")
+
+(defvar nterm-dwl-exist nil
+  "True if double width line exists")
+
 ;;; core nterm functions
 (defmacro nterm-defdispatch (dispatch-list)
   "Create a dispatch table from DISPATCH-LIST."
@@ -219,6 +209,28 @@ Return DEFAULT is NUMER is 0"
   (let ((collect-number (string-to-number number)))
     (if (eq collect-number 0) default collect-number)))
 
+(defun nterm-assert ()
+  "Check integrity of the emulator"
+  (interactive)
+  (with-current-buffer nterm-buffer-name
+    (let ((line (count-lines (point-min) (point-max))))
+      (if (not (= line nterm-height))
+          (error "Number of lines is %d but nterm-height is %d"
+                 line nterm-height))
+      (setq line 0)
+      (while (< line nterm-height)
+        (let ((assert-width
+               (progn
+                 (goto-line (1+ line))
+                 (- (line-end-position) (point))))
+              (assert-expected-width
+               (if (nterm-mem-line-dwl line)
+                   (/ nterm-width 2) nterm-width)))
+          (if (not (= assert-width assert-expected-width))
+              (error "Line %d is not %d character long"
+                     line assert-expected-width)))
+        (setq line (1+ line))))))
+
 (defun nterm-blank-screen (&optional char)
   "Blank screen and memory with CHAR.
 If char is not specified fill with space.
@@ -240,7 +252,7 @@ TBD pull nterm-vt100-* out of this function."
   "Return CONS of cursor-position (line . col)."
   (let ((line (cadr (assq 'cursor nterm-state)))
         (col (cddr (assq 'cursor nterm-state))))
-    (if (aref nterm-debug nterm-debug-cursor)
+    (if nterm-debug-cursor
         (message "nterm-cursor-position-get line=%d col=%d" line col))
     (cons line col)))
 
@@ -249,7 +261,7 @@ TBD pull nterm-vt100-* out of this function."
   (let ((get-line (cadr (assq 'cursor nterm-state))))
     (if (>= get-line nterm-height)
         (error "line out of range line=%d" get-line))
-    (if (aref nterm-debug nterm-debug-cursor)
+    (if nterm-debug-cursor
         (message "nterm-cursor-line-get col=%d" get-line))
     get-line))
 
@@ -258,13 +270,13 @@ TBD pull nterm-vt100-* out of this function."
   (let ((get-col (cddr (assq 'cursor nterm-state))))
     (if (>= get-col nterm-width)
         (error "col out of range col=%d" get-col))
-    (if (aref nterm-debug nterm-debug-cursor)
+    (if nterm-debug-cursor
         (message "nterm-cursor-col-get col=%d" get-col))
     get-col))
 
 (defun nterm-cursor-position-set (cursor-set)
   "Set cursor to cons CURSOR-SET (line . col)."
-  (if (aref nterm-debug nterm-debug-cursor)
+  (if nterm-debug-cursor
       (message "nterm-cursor-position-set line=%d col=%d"
                (car cursor-set) (cdr cursor-set)))
   (nterm-cursor-col-set (cdr cursor-set))
@@ -274,52 +286,49 @@ TBD pull nterm-vt100-* out of this function."
   "Move cursor to line CURSOR-LINE."
   (if (>= cursor-line nterm-height)
       (error "line out of range line=%d" cursor-line))
-  (if (aref nterm-debug nterm-debug-cursor)
+  (if nterm-debug-cursor
       (message "nterm-cursor-line-set line=%d" cursor-line))
   (setcar (cdr (assq 'cursor nterm-state)) cursor-line)
-  (goto-char 1)
-  (forward-line cursor-line)
-  (goto-char (+ (line-beginning-position) (nterm-cursor-col-get))))
+  (with-current-buffer nterm-buffer-name
+    (goto-char 1)
+    (forward-line cursor-line)
+    (goto-char (+ (line-beginning-position) (nterm-cursor-col-get)))))
 
 (defun nterm-cursor-col-set (cursor-col)
   "Move cursor to column CURSOR-COL."
   (if (>= cursor-col (nterm-vt100-width))
       (error "col out of range col=%d" cursor-col))
-  (if (aref nterm-debug nterm-debug-cursor)
+  (if nterm-debug-cursor
       (message "nterm-cursor-col-set col=%d" cursor-col))
   (setcdr (cdr (assq 'cursor nterm-state)) cursor-col)
-  (let ((window (get-buffer-window nterm-buffer-name)))
-    (if window (select-window window)
-      (switch-to-buffer-other-window nterm-buffer-name)))
-  (goto-char (+ (line-beginning-position) cursor-col)))
+  (with-current-buffer nterm-buffer-name
+    (goto-char (+ (line-beginning-position) cursor-col))))
 
 (defun nterm-emulate (process output)
   "Dispatch characters from process"
-  (if (aref nterm-debug nterm-debug-emulator)
-      (message output))
-  (if nterm-record-enable
-      (nterm-record-insert output))
-  (let ((emulate-index 0)
-        (emulate-length (length output))
-        (emulate-dispatch nil)
-        (emulate-char ?0)
-        (emulate-buffer (current-buffer)))
-    (set-buffer nterm-buffer-name)
-    (while (< emulate-index emulate-length)
-      (setq emulate-char (aref output emulate-index))
-      (if (< emulate-char (length (eval nterm-dispatch)))
-          (progn
-            (setq emulate-dispatch (aref (eval nterm-dispatch) emulate-char))
-            (if emulate-dispatch
-                (progn
-                  (if (aref nterm-debug nterm-debug-emulator)
-                      (message "received 0x%x %c dispatch %S"
-                               emulate-char emulate-char emulate-dispatch))
-                  (funcall emulate-dispatch emulate-char))
-              (if (aref nterm-debug nterm-debug-emulator)
-                  (message "received 0x%x not handled" emulate-char)))))
-      (incf emulate-index))
-    (set-buffer emulate-buffer)))
+  (with-current-buffer nterm-buffer-name
+    (if nterm-debug-emulator
+        (message output))
+    (if nterm-record-enable
+        (nterm-record-insert output))
+    (let ((emulate-index 0)
+          (emulate-length (length output))
+          (emulate-dispatch nil)
+          (emulate-char ?0)
+          (emulate-buffer (current-buffer)))
+      (set-buffer nterm-buffer-name)
+      (while (< emulate-index emulate-length)
+        (setq emulate-char (aref output emulate-index))
+        (when (< emulate-char (length (eval nterm-dispatch)))
+          (setq emulate-dispatch (aref (eval nterm-dispatch) emulate-char))
+          (when emulate-dispatch
+            (if nterm-debug-emulator
+                (message "received 0x%x %c dispatch %S"
+                         emulate-char emulate-char emulate-dispatch))
+            (funcall emulate-dispatch emulate-char)
+            (if nterm-debug-emulator
+                (message "received 0x%x not handled" emulate-char))))
+        (incf emulate-index)))))
 
 (defun nterm-init ()
   (setq nterm-state
@@ -380,37 +389,40 @@ KEY-PAD list of keypad keys in application and numeric mode."
 Entry to this mode runs the hooks on `nterm-mode-hook'."
   (interactive)
   (get-buffer-create nterm-buffer-name)
-  (pop-to-buffer nterm-buffer-name)
-  (kill-all-local-variables)
-  (set (make-local-variable 'nterm-process)
-       (get-buffer-process (current-buffer)))
-  (set (make-local-variable 'nterm-argument) "")
-  (setq mode-name "nterm")
-  (setq major-mode 'nterm-mode)
-  (setq truncate-lines t)
-  (buffer-disable-undo nil)
+  (when (not nterm-unit-testing)
+      (pop-to-buffer nterm-buffer-name)
+      (kill-all-local-variables)
+      (set (make-local-variable 'nterm-process)
+           (get-buffer-process (current-buffer)))
+      (setq mode-name "nterm")
+      (setq major-mode 'nterm-mode))
+  (with-current-buffer nterm-buffer-name
+    (set (make-local-variable 'nterm-argument) "")
+    (setq truncate-lines t)
+    (buffer-disable-undo nil))
   (nterm-init)
   (nterm-vt52-init)
   (nterm-vt100-init)
   (nterm-vt100-switch)
   (nterm-blank-screen)
-  (let* ((process-environment
-          (nconc
-           (list
-            (format "TERM=vt100")) process-environment))
-         (process-connection-type t)
-         (inhibit-eol-conversion t)
-         (coding-system-for-read 'binary)
-         (process
-          (start-process
-           nterm-shell nterm-buffer-name
-           nterm-shell "-c"
-           (format "stty -nl echo rows %d columns %d sane ; exec %s"
-                   nterm-height nterm-width nterm-shell))))
-    (set-process-filter process 'nterm-emulate))
-  (run-hooks 'nterm-mode-hook))
+  (when (not nterm-unit-testing)
+    (let* ((process-environment
+            (nconc
+             (list
+              (format "TERM=vt100")) process-environment))
+           (process-connection-type t)
+           (inhibit-eol-conversion t)
+           (coding-system-for-read 'binary)
+           (process
+            (start-process
+             nterm-shell nterm-buffer-name
+             nterm-shell "-c"
+             (format "stty -nl echo rows %d columns %d sane ; exec %s"
+                     nterm-height nterm-width nterm-shell))))
+      (set-process-filter process 'nterm-emulate))
+    (run-hooks 'nterm-mode-hook)))
 
-(defun nterm-scroll-up (top bottom blank-line-function)
+(defun nterm-scroll-up (top bottom line-draw-function)
   "Scroll screen up from TOP to BOTTOM.
 Use BLANK-LINE-FUNCTION to insert a blank line."
   (let ((up-pos (nterm-cursor-position-get)))
@@ -425,12 +437,11 @@ Use BLANK-LINE-FUNCTION to insert a blank line."
     (nterm-cursor-position-set (cons top 0))
     (nterm-kill-line)
     (nterm-cursor-position-set (cons bottom 0))
-    (end-of-line)
     (insert "\n")
-    (nterm-vt100-line-draw (1+ bottom))
+    (funcall line-draw-function)
     (nterm-cursor-position-set up-pos)))
 
-(defun nterm-scroll-down (top bottom blank-line-function)
+(defun nterm-scroll-down (top bottom line-draw-function)
   "Scroll screen down from TOP to BOTTOM.
 Use BLANK-LINE-FUNCTION to insert a blank line."
   (let ((down-pos (nterm-cursor-position-get)))
@@ -445,7 +456,7 @@ Use BLANK-LINE-FUNCTION to insert a blank line."
     (nterm-kill-line)
     (nterm-cursor-position-set (cons top 0))
     (insert "\n")
-    (nterm-vt100-line-draw)
+    (funcall line-draw-function)
     (nterm-cursor-position-set down-pos)))
 
 (defun nterm-send-string (string)
@@ -485,7 +496,7 @@ Use BLANK-LINE-FUNCTION to insert a blank line."
 
 (defun nterm-ansi-rm (char)
   "RM -- Reset Mode - ansi"
-  (if (aref nterm-debug nterm-debug-ansi)
+  (if nterm-debug-ansi
       (message "RM"))
   (if (nterm-vt100-set-mode
        nterm-ansi-mode nterm-ansi-mode-function nil)
@@ -493,7 +504,7 @@ Use BLANK-LINE-FUNCTION to insert a blank line."
 
 (defun nterm-ansi-sm (char)
   "SM -- Set Mode - ansi"
-  (if (aref nterm-debug nterm-debug-ansi)
+  (if nterm-debug-ansi
       (message "SM"))
   (nterm-vt100-set-mode
    nterm-ansi-mode nterm-ansi-mode-function t)
@@ -596,7 +607,7 @@ If COPY is t copy parameter"
 
 (defun nterm-background(index))
 
-;;; vt100 emulator
+;;; Vt100 emulator
 ;; I have used the vt100 User Guide at
 ;; http://vt100.net/docs/vt100-ug/
 (defvar nterm-vt100-state nil
@@ -767,6 +778,8 @@ your liking.")
 (defconst nterm-vt100-char-blink 2)
 (defconst nterm-vt100-char-reverse 3)
 (defconst nterm-vt100-char-special 4)
+(defconst nterm-vt100-char-uk 5)
+
 ;;; Line attributes
 (defconst nterm-vt100-line-decdwl 0
   "Line is double width")
@@ -780,9 +793,11 @@ your liking.")
 (defconst nterm-vt100-line-decdwl-bottom 3
   "Line is bottom double width")
 
+;;; Dispatch tables
 (nterm-defdispatch ; Primary dispatch of a VT100
  '(nterm-vt100-primary-dispatch
    128 nterm-vt100-char-self
+   ? nterm-vt100-soh
    ? nterm-vt100-so
    ? nterm-vt100-si
    ?\a nterm-vt100-bel
@@ -901,20 +916,21 @@ your liking.")
   "Bell."
   (ding))
 
-(defun nterm-vt100-blank-line (char line &optional length replace)
-  "Insert LENGTH of CHAR at LINE.
-If LENGTH is nil use the terminal width If REPLACE is t
-characters are overwritten. LINE is 0 based. The cursor is left
-at the end of the line"
-  (nterm-cursor-line-set line)
-  (or length
-      (progn
-        (setq length (1- (nterm-vt100-width)))
-        (nterm-cursor-col-set 0)))
-  (let ((line-index 0))
-    (while (< line-index length)
-      (nterm-vt100-char-insert char replace)
-      (incf line-index))))
+(defun nterm-vt100-blank-line (bl-line bl-start bl-end bl-reset)
+  "Blank LINE from START to END, RESET line attribute.
+If END is nil go to the end of the term. Reset all attributes
+on the line. If RESET is non nil reset line attribute."
+  (if (not bl-line)
+      (setq bl-line (nterm-cursor-line-get)))
+  (if bl-reset
+      (nterm-mem-line-reset bl-line))
+  (let ((bl-index bl-start))
+    (while (< bl-index bl-end)
+      (aset (cdr (assq 'char (nth bl-line nterm-memory))) bl-index ?\s)
+      (aset (cdr (assq 'attr (nth bl-line nterm-memory)))
+            bl-index (nterm-mem-attribute))
+      (incf bl-index)))
+  (nterm-vt100-line-draw bl-line))
 
 (defun nterm-vt100-blink-screen ()
   "Blink timer, handle blinking on the screen."
@@ -946,7 +962,7 @@ at the end of the line"
 (defun nterm-vt100-bs (char)
   "Backspace, it doesn't erase in VT100"
   (let* ((cub-col (- (nterm-cursor-col-get) 1)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "Backspace"))
     (if (< cub-col 0)
         (setq cub-col 0))
@@ -960,7 +976,7 @@ TBD implement DECOM"
   (let* ((cpr-line (+ (nterm-cursor-line-get) 1))
          (cpr-col (+ (nterm-cursor-col-get) 1))
          (string (format "\e[%s;%s)" cpr-line cpr-col)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "CPR line=%d col=%d" cpr-line cpr-col))
     (nterm-send-string string)))
 
@@ -968,7 +984,7 @@ TBD implement DECOM"
   "CUB -- Cursor Backward -- host to vt100"
   (let* ((cub-number (car (nterm-argument-to-list 1 1)))
          (cub-col (- (nterm-cursor-col-get) cub-number)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "CUB %d" cub-number))
     (if (< cub-col 0)
         (setq cub-col 0))
@@ -980,7 +996,7 @@ TBD implement DECOM"
   (let* ((cud-number (car (nterm-argument-to-list 1 1)))
          (cud-line (+ (nterm-cursor-line-get) cud-number))
          (cud-height (cdr (assq 'bottom-margin nterm-vt100-state))))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "CUD %d" cud-number))
     (if (> cud-line cud-height)
         (setq cud-line cud-height))
@@ -992,7 +1008,7 @@ TBD implement DECOM"
   (let* ((cuf-number (car (nterm-argument-to-list 1 1)))
          (cuf-col (+ (nterm-cursor-col-get) cuf-number))
          (cuf-width (- (nterm-vt100-width) 1)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "CUF %d" cuf-number))
     (if (> cuf-col cuf-width)
         (setq cuf-col cuf-width))
@@ -1011,7 +1027,7 @@ TBD implement DECOM"
     ;; check for  upper bound
     (and (> cup-line nterm-height) (setq cup-line 1))
     (and (> cup-col nterm-width) (setq cup-col 1))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "CUP line=%d col=%d" cup-line cup-col))
     (nterm-cursor-position-set (cons (- cup-line 1) (- cup-col 1))))
   (nterm-vt100-escape-end char))
@@ -1021,7 +1037,7 @@ TBD implement DECOM"
   (let* ((cuu-number (car (nterm-argument-to-list 1 1)))
          (cuu-line (- (nterm-cursor-line-get) cuu-number))
          (cuu-top (cdr (assq 'top-margin nterm-vt100-state))))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "CUU %d" cuu-number))
     (if (< cuu-line cuu-top)
         (setq cuu-line cuu-top))
@@ -1039,7 +1055,8 @@ TBD implement DECOM"
          (insert-mem-attribute
           (cdr (assq 'attr (nth insert-line nterm-memory))))
          (insert-attribute (cdr (assq 'attribute nterm-vt100-state)))
-         (insert-char-table (nterm-vt100-char-insert-table insert-attribute))
+         (insert-char-table (eval (nterm-vt100-char-insert-table
+                                   insert-attribute)))
          (insert-char (if (< char (length insert-char-table))
                           (aref insert-char-table char))))
     (if insert-char
@@ -1056,7 +1073,7 @@ TBD implement DECOM"
                   (cdr (assq 'background nterm-vt100-state))
                   (cdr (assq 'foreground nterm-vt100-state))))
                 ((characterp insert-char)
-                 (insert (char-to-string char))
+                 (insert (char-to-string insert-char))
                  (put-text-property (- (point) 1) (point) 'face
                                     (cdr (assq 'face nterm-vt100-state)))))
           (nterm-vt100-cuf ?\s)))
@@ -1064,12 +1081,15 @@ TBD implement DECOM"
 
 (defun nterm-vt100-char-insert-table (attribute)
   "TBD document"
-  (eval (nth (if (aref attribute nterm-vt100-char-special) 1 0)
-             (nth (cond ((nterm-mem-line-get nterm-vt100-line-decdwl) 1)
-                        ((nterm-mem-line-get nterm-vt100-line-decdwl-top) 2)
-                        ((nterm-mem-line-get nterm-vt100-line-decdwl-bottom) 3)
-                        (t 0))
-                  nterm-vt100-charset-table))))
+  (nth (if (aref attribute nterm-vt100-char-special) 1 0)
+       (nth (if nterm-dwl-exist
+                (let ((i-t-attr
+                       (nterm-mem-line-get (nterm-cursor-line-get))))
+                  (cond ((aref i-t-attr nterm-vt100-line-decdwl) 1)
+                        ((aref i-t-attr nterm-vt100-line-decdwl-top) 2)
+                        ((aref i-t-attr nterm-vt100-line-decdwl-bottom) 3)
+                        (t 0))) 0)
+            nterm-vt100-charset-table)))
 
 (defun nterm-vt100-char-insert-blink (attribute line-attr)
   "TBD document"
@@ -1085,12 +1105,8 @@ TBD implement DECOM"
 (defun nterm-vt100-char-self (char)
   "Insert character from output.
 Take care of wrapping."
-  ;; focus
-  (let ((self-window (get-buffer-window nterm-buffer-name))
-        (self-width (nterm-vt100-width))
+  (let ((self-width (nterm-vt100-width))
         (self-col (nterm-cursor-col-get)))
-    (if self-window (select-window self-window)
-      (switch-to-buffer-other-window nterm-buffer-name))
     ;; wrapping
     (if (and (nterm-vt100-mode-decawm)
              (cdr (assq 'wrap nterm-vt100-state))
@@ -1106,21 +1122,20 @@ Take care of wrapping."
 
 (defun nterm-vt100-cr (char)
   "Do a carriage return"
-  (interactive)
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "CR"))
   (nterm-cursor-col-set 0))
 
 (defun nterm-vt100-da (char)
   "DA -- Device attribute TBD"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DA"))
   (nterm-send-string"\e[?1;2c")
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-decaln (char)
   "DECALN -- Screen Alignment Display (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECALN"))
   (nterm-blank-screen ?E)
   (nterm-vt100-escape-end char))
@@ -1133,71 +1148,76 @@ Take care of wrapping."
 
 (defun nterm-vt100-decawm (flag)
   "DECAWM – Auto Wrap Mode (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECAWM %s" (if flag "set" "reset"))))
 
 (defun nterm-vt100-decckm (flag)
   "DECCKM – Column Mode (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECCKM %s" (if flag "set" "reset"))))
 
 (defun nterm-vt100-deccolm (flag)
   "DECCOLM – Column Mode (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECCOLM %s" (if flag "set" "reset")))
   (let ((deccolm-width (if flag 132 80)))
     (set-frame-width nil deccolm-width)
     (nterm-vt100-home)
     (setq nterm-width deccolm-width)
-    (nterm-blank-screen ?\s)))
+    (nterm-blank-screen ?\s)
+    (nterm-vt100-tab-clear)
+    (nterm-vt100-tab-reset)))
 
 (defun nterm-vt100-decdhl-top (char)
   "DECDHL -- Double Height Line (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECHDL (top)"))
   (nterm-mem-line-set nterm-vt100-line-decdwl nil)
   (nterm-mem-line-set nterm-vt100-line-decdwl-top t)
   (nterm-mem-line-set nterm-vt100-line-decdwl-bottom nil)
+  (setq nterm-dwl-exist t)
   (nterm-vt100-line-draw)
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-decdhl-bottom (char)
   "DECDHL -- Double Height Line (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECHDL (bottom)"))
   (nterm-mem-line-set nterm-vt100-line-decdwl nil)
   (nterm-mem-line-set nterm-vt100-line-decdwl-top nil)
   (nterm-mem-line-set nterm-vt100-line-decdwl-bottom t)
+  (setq nterm-dwl-exist t)
   (nterm-vt100-line-draw)
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-decdwl (char)
   "DECDWL -- Double-Width Line (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECDWL"))
   (nterm-mem-line-set nterm-vt100-line-decdwl t)
   (nterm-mem-line-set nterm-vt100-line-decdwl-top nil)
   (nterm-mem-line-set nterm-vt100-line-decdwl-bottom nil)
+  (setq nterm-dwl-exist t)
   (nterm-vt100-line-draw)
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-decid (char)
   "DECID -- Identify Terminal (DEC Private)
 TBD implement"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECID"))
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-deckpam (char)
   "DECKPAM -- Keypad Application Mode (DEC Private)."
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECKPAM"))
   (aset nterm-vt100-mode 10 t)
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-deckpnm (char)
   "DECKPNM -- Keypad Numeric Mode (DEC Private)."
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECKPNM"))
   (aset nterm-vt100-mode 10 nil)
   (nterm-vt100-escape-end char))
@@ -1205,19 +1225,19 @@ TBD implement"
 (defun nterm-vt100-decll (char)
   "DECLL -- Load LEDS (DEC Private)
 TBD implement"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECKLL")
     (nterm-vt100-escape-end char)))
 
 (defun nterm-vt100-decom (flag)
   "DECOM – Origin Mode (DEC Private)"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECOM %s" (if flag "set" "reset")))
   (nterm-vt100-home))
 
 (defun nterm-vt100-decrc (char)
   "DECRC -- Restore Cursor (DEC Private) - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "RC"))
   (nterm-cursor-position-set (cdr (assq 'save-cursor nterm-vt100-state)))
   (nterm-state-copy save-charset charset nil)
@@ -1229,19 +1249,19 @@ TBD implement"
 (defun nterm-vt100-decreptparm ()
   "DECREPTPARM -- Report Terminal Parameters - vt100 to host
 TBD implement"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "REPTPARM")))
 
 (defun nterm-vt100-decreqtparm (char)
   "DECREQTPARM -- Request Terminal Parameters - host to vt100
 TBD implement"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECREQTPARM"))
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-decsc (char)
   "DECSC -- Save Cursor (DEC Private) - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECSC"))
   (setcdr (assq 'save-cursor nterm-vt100-state)
           (nterm-cursor-position-get))
@@ -1263,7 +1283,7 @@ TBD implement"
   (let* ((stbm-list (nterm-argument-to-list 2 0))
          (stbm-top (nth 0 stbm-list))
          (stbm-bottom (nth 1 stbm-list)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "DECSTBM top=%d bottom=%d" stbm-top stbm-bottom))
     (if (= stbm-bottom 0)
         (setq stbm-bottom (- nterm-height 1))
@@ -1279,7 +1299,7 @@ TBD implement"
 
 (defun nterm-vt100-decswl (char)
   "DECSWL -- Single-width Line (DEC Private) - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECSWL"))
   (nterm-mem-line-set nterm-vt100-line-decdwl nil)
   (nterm-mem-line-set nterm-vt100-line-decdwl-top nil)
@@ -1289,7 +1309,7 @@ TBD implement"
 
 (defun nterm-vt100-dectst (char)
   "DECTST -- Invoke Confidence Test - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECTST"))
   (let ((list-dectst (nterm-argument-to-list 2 0)))
     (if (and (eq (nth 0 list-dectst) 2)
@@ -1298,7 +1318,7 @@ TBD implement"
 
 (defun nterm-vt100-dsr (char)
   "DSR -- Device Status Report"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "DECDSR"))
   (let ((dsr-number (car (nterm-argument-to-list 1 0))))
     (cond ((eq dsr-number 0)
@@ -1312,56 +1332,39 @@ TBD implement"
         (ed-index 0)
         (ed-line (nterm-cursor-line-get))
         (ed-col (nterm-cursor-col-get)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "ED par=%d" ed-number))
     (while (< ed-index nterm-height)
       (cond
-       ((< ed-index ed-line)
-        (if (not (eq ed-number 0))
-            (progn
-              (nterm-cursor-position-set (cons ed-index 0))
-              (nterm-mem-line-reset ed-index)
-              (nterm-vt100-blank-line ?\s ed-index nil t))))
+       ((and (< ed-index ed-line) (not (eq ed-number 0)))
+        (nterm-vt100-blank-line ed-index 0 nterm-width t))
        ((= ed-index ed-line)
-        (cond
-         ((eq ed-number 0)
-          (nterm-cursor-position-set (cons ed-line ed-col))
-          (nterm-vt100-blank-line ?\s ed-index (- nterm-width ed-col) t))
-         ((eq ed-number 1)
-          (nterm-cursor-position-set (cons ed-line 0))
-          (nterm-vt100-blank-line ?\s ed-index (+ ed-col 1) t))
-         (t ; ed-number = 2 and everything else
-          (nterm-cursor-position-set (cons ed-index 0))
-          (nterm-mem-line-reset ed-index)
-          (nterm-vt100-blank-line ?\s ed-index nil t))))
-       ((> ed-index ed-line)
-        (if (not (eq ed-number 1))
-            (progn
-              (nterm-cursor-position-set (cons ed-index 0))
-              (nterm-mem-line-reset ed-index)
-              (nterm-vt100-blank-line ?\s ed-index nil t)))))
+        (nterm-vt100-el-ex ed-number t))
+       ((and (> ed-index ed-line) (not (eq ed-number 1)))
+        (nterm-vt100-blank-line ed-index 0 nterm-width t)))
       (incf ed-index))
-    ;; put the cursor back where it was
-    (nterm-cursor-position-set (cons ed-line ed-col))
     (nterm-vt100-escape-end char)))
 
 (defun nterm-vt100-el (char)
   "EL -- Erase In Line - host to vt100."
-  (let ((el-number (car (nterm-argument-to-list 1 0)))
-        (el-line (nterm-cursor-line-get))
-        (el-col (nterm-cursor-col-get)))
-    (if (aref nterm-debug nterm-debug-vt100)
-        (message "EL par=%d" el-number))
-    (cond
-     ((eq el-number 0)
-      (nterm-vt100-blank-line ?\s el-line (- nterm-width el-col) t))
-     ((eq el-number 1)
-      (nterm-cursor-col-set 0)
-      (nterm-vt100-blank-line ?\s el-line (+ el-col 1) t))
-     (t
-      (nterm-vt100-blank-line ?\s el-line nil t)))
-    (nterm-cursor-col-set el-col))
+  (if nterm-debug-vt100
+      (message "EL par=%d" el-number))
+  (nterm-vt100-el-ex (car (nterm-argument-to-list 1 0)) nil)
   (nterm-vt100-escape-end char))
+
+(defun nterm-vt100-el-ex (el-ex-number el-ex-reset)
+  "Erase line, used by ED and EL.
+Erase part line depending on NUMBER. If RESET is t reset line
+attribute."
+  (cond
+   ((eq el-ex-number 0)
+    (nterm-vt100-blank-line
+     nil (nterm-cursor-col-get) nterm-width nil))
+   ((eq el-ex-number 1)
+    (nterm-vt100-blank-line
+     nil 0 (1+ (nterm-cursor-col-get)) nil))
+   ((eq el-ex-number 2)
+    (nterm-vt100-blank-line nil 0 nterm-width el-ex-reset))))
 
 (defun nterm-vt100-escape-start (char)
   "Enter escape mode"
@@ -1398,7 +1401,7 @@ Take in account of top margin with DECOM"
 
 (defun nterm-vt100-hts (char)
   "HTS -- Horizontal Tabulation Set - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "HTS"))
   (aset (cdr (assq 'tab nterm-vt100-state)) (nterm-cursor-col-get) t)
   (nterm-vt100-escape-end char))
@@ -1406,16 +1409,17 @@ Take in account of top margin with DECOM"
 (defun nterm-vt100-hvp (char)
   "HVP -- Horizontal and Vertical Position - host to vt100
 TBD handle DECOM"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "HVP"))
-  (nterm-vt100-cup char))
+  (nterm-vt100-cup char)
+  (nterm-vt100-escape-end char))
 
 ;; What's the escape sequence for the following?
 ;; LNM -- Line Feed/New Line Mode
 
 (defun nterm-vt100-ind (char)
   "IND -- Index - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "IND"))
   (nterm-vt100-lf char)
   (nterm-vt100-escape-end char))
@@ -1491,6 +1495,7 @@ TBD handle DECOM"
                (car (nth (nterm-vt100-mode-decscnm-0) nterm-vt100-color)))
          ;; cons of (g0 . g1)
          (cons 'charset (list 'normal 'normal))
+         (cons 'current-charset 0)
          (cons 'tab (make-bool-vector nterm-width nil))
          (cons 'top-margin 0)
          (cons 'bottom-margin (- nterm-height 1))
@@ -1512,49 +1517,53 @@ TBD handle DECOM"
 (defun nterm-vt100-lf (char)
   "Do a line feed, handle scrolling"
   (interactive)
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "LF"))
   (let ((lf-line (nterm-cursor-line-get)))
     (if (= lf-line (cdr (assq 'bottom-margin nterm-vt100-state)))
         (nterm-scroll-up
          (cdr (assq 'top-margin nterm-vt100-state))
          (cdr (assq 'bottom-margin nterm-vt100-state))
-         'nterm-vt100-blank-line)
+         'nterm-vt100-line-draw)
       (nterm-cursor-line-set (+ lf-line 1)))))
 
 (defun nterm-vt100-line-draw (&optional line)
   "Draw LINE from terminal memory."
-  (or line
-      (setq line (nterm-cursor-line-get)))
-  (let ((draw-index 0)
-        (draw-cur (nterm-cursor-position-get)))
-    (nterm-cursor-position-set (cons line 0))
-    (nterm-kill-line)
-    (let* ((draw-dwl (nterm-mem-line-dwl))
-           (draw-end (nterm-vt100-width)))
-      (while (< draw-index draw-end)
-        (let ((res (nterm-vt100-line-draw-attribute line draw-index draw-dwl)))
-          (if draw-dwl
-              (nterm-vt100-line-draw-dwl res)
-            (insert (cdr (assq 'char res)))
-            (remove-text-properties (- (point) 1) (point) '(face))
-            (put-text-property (- (point) 1) (point) 'face
-                               (cdr (assq 'face res)))))
-        (incf draw-index)))
-    (insert "\n")
-    (nterm-cursor-position-set draw-cur)))
+  (with-current-buffer nterm-buffer-name
+    (or line
+        (setq line (nterm-cursor-line-get)))
+    (let ((draw-index 0)
+          (draw-cur (nterm-cursor-position-get)))
+      (nterm-cursor-position-set (cons line 0))
+      (nterm-kill-line)
+      (let* ((draw-dwl (nterm-mem-line-dwl))
+             (draw-end (nterm-vt100-width)))
+        (while (< draw-index draw-end)
+          (let ((res (nterm-vt100-line-draw-attribute
+                      line draw-index draw-dwl)))
+            (if draw-dwl
+                (nterm-vt100-line-draw-dwl res)
+              (insert (cdr (assq 'char res)))
+              (remove-text-properties (- (point) 1) (point) '(face))
+              (put-text-property (- (point) 1) (point) 'face
+                                 (cdr (assq 'face res)))))
+          (incf draw-index)))
+      (insert "\n")
+      (nterm-cursor-position-set draw-cur))))
 
 (defun nterm-vt100-line-draw-attribute (line draw-index draw-dwl)
   "TBD document me."
-  (let ((draw-attribute
-         (aref (cdr (assq 'attr (nth line nterm-memory))) draw-index))
-        (draw-char
-         (aref (cdr (assq 'char (nth line nterm-memory))) draw-index))
-        (draw-face (nterm-vt100-face-default))
-        (draw-background
-         (car (nth (nterm-vt100-mode-decscnm-0) nterm-vt100-color)))
-        (draw-foreground
-         (car (nth (nterm-vt100-mode-decscnm-1) nterm-vt100-color))))
+  (let* ((draw-attribute
+          (aref (cdr (assq 'attr (nth line nterm-memory))) draw-index))
+         (draw-char-table (eval (nterm-vt100-char-insert-table draw-attribute)))
+         (char (aref (cdr (assq 'char (nth line nterm-memory))) draw-index))
+         (draw-char (if (< char (length draw-char-table))
+                        (aref draw-char-table char)))
+         (draw-face (nterm-vt100-face-default))
+         (draw-background
+          (car (nth (nterm-vt100-mode-decscnm-0) nterm-vt100-color)))
+         (draw-foreground
+          (car (nth (nterm-vt100-mode-decscnm-1) nterm-vt100-color))))
     (if (aref draw-attribute nterm-vt100-char-underline)
         (nterm-face-underline draw-face))
     (if (and (aref draw-attribute nterm-vt100-char-blink)
@@ -1576,12 +1585,9 @@ TBD handle DECOM"
 
 (defun nterm-vt100-line-draw-dwl (res)
   "Draw double width LINE from terminal memory."
-  (let* ((dwl-table (nterm-vt100-char-insert-table
-                     (cdr (assq 'attribute res))))
-         (dwl-string (aref dwl-table (cdr (assq 'char res)))))
-    (nterm-insert-image dwl-string 24 24
-                        (cdr (assq 'background res))
-                        (cdr (assq 'foreground res)))))
+  (nterm-insert-image (cdr (assq 'char res)) 24 24
+                      (cdr (assq 'background res))
+                      (cdr (assq 'foreground res))))
 
 (defun nterm-vt100-mode-decawm ()
   "Returns DECAWM mode"
@@ -1594,7 +1600,6 @@ TBD handle DECOM"
 (defun nterm-vt100-mode-decom ()
   "Returns DECOM mode"
   (aref nterm-vt100-mode 6))
-
 
 (defun nterm-vt100-mode-deckpam ()
   (aref nterm-vt100-mode 10))
@@ -1615,7 +1620,7 @@ Returns 0 if set 1 otherwise"
 
 (defun nterm-vt100-nel (char)
   "NEL -- Next Line - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "NEL"))
   (nterm-vt100-cr char)
   (nterm-vt100-lf char)
@@ -1640,26 +1645,26 @@ Home the cursor at the beginning."
 
 (defun nterm-vt100-ri (char)
   "RI -- Reverse Index - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "RI"))
   (if (= (nterm-cursor-line-get) (cdr (assq 'top-margin nterm-vt100-state)))
       (nterm-scroll-down
        (cdr (assq 'top-margin nterm-vt100-state))
        (cdr (assq 'bottom-margin nterm-vt100-state))
-       'nterm-vt100-blank-line)
+       'nterm-vt100-line-draw)
     (nterm-vt100-cuu char))
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-ris (char)
   "RIS -- Reset To Initial State - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "RIS"))
   (nterm-vt100-reset ?\s)
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-rm (char)
   "RM -- Reset Mode - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "RM"))
   (if (nterm-vt100-set-mode
        nterm-vt100-mode nterm-vt100-mode-function nil)
@@ -1667,7 +1672,7 @@ Home the cursor at the beginning."
 
 (defun nterm-vt100-scs-g0 (char)
   "SCS -- Select Character Set G0- host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "SCS %c" char))
   (setcar
    (cdr (assq 'charset nterm-vt100-state))
@@ -1679,11 +1684,12 @@ Home the cursor at the beginning."
     ((eq char ?1) 'normal)
     ;; TBD Alternate Character ROM Special Graphics
     ((eq char ?2) 'special)))
+  (nterm-vt100-set-attribute)
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-scs-g1 (char)
   "SCS -- Select Character Set G0- host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "SCS %c" char))
   (setcar
    (cddr (assq 'charset nterm-vt100-state))
@@ -1695,7 +1701,16 @@ Home the cursor at the beginning."
     ((eq char ?1) 'normal)
     ;; TBD Alternate Character ROM Special Graphics
     ((eq char ?2) 'special)))
+  (nterm-vt100-set-attribute)
   (nterm-vt100-escape-end char))
+
+(defun nterm-vt100-set-attribute ()
+  "Set attribute from selected G0 or G1 set"
+  (let ((charset (nth (cdr (assq 'current-charset nterm-vt100-state))
+                      (cdr (assq 'charset nterm-vt100-state))))
+        (attribute (cdr (assq 'attribute nterm-vt100-state))))
+    (aset attribute nterm-vt100-char-special (eq charset 'special))
+    (aset attribute nterm-vt100-char-uk (eq charset 'uk))))
 
 (defun nterm-vt100-set-mode (mode function flag)
   "Set FLAG to MODE call function if mode has changed.
@@ -1723,7 +1738,7 @@ Returns t unless a switch to vt52 has occurred."
         (sgr-foreground (cdr (assq 'foreground nterm-vt100-state)))
         (sgr-background (cdr (assq 'background nterm-vt100-state)))
         sgr-number)
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "SGR %S" sgr-list))
     (while sgr-list
       (setq sgr-number (car sgr-list))
@@ -1756,24 +1771,24 @@ Returns t unless a switch to vt52 has occurred."
 
 (defun nterm-vt100-si (char)
   "Set G0 char table."
-  (let ((si-table (cadr (assq 'charset nterm-vt100-state))))
-    (setcdr (assq 'char-table nterm-vt100-state) si-table)
-    (nterm-vt100-si-so-attribute si-table)))
-
-(defun nterm-vt100-si-so-attribute (table)
-  (aset (cdr (assq 'attribute nterm-vt100-state))
-        nterm-vt100-char-special
-        (eq table 'special)))
+  (setcdr (assq 'current-charset nterm-vt100-state) 0)
+  (nterm-vt100-set-attribute))
 
 (defun nterm-vt100-so (char)
-  "Set G1 char table"
-  (let ((so-table (nth 2 (assq 'charset nterm-vt100-state))))
-    (setcdr (assq 'char-table nterm-vt100-state) so-table)
-    (nterm-vt100-si-so-attribute so-table)))
+  "Set G0 char table."
+  (setcdr (assq 'current-charset nterm-vt100-state) 1)
+  (nterm-vt100-set-attribute))
+
+(defun nterm-vt100-soh (char)
+  "Do a start of heading"
+  (if nterm-debug-vt100
+      (message "SOH"))
+  ;; behaves like a line feed
+  (nterm-vt100-lf char))
 
 (defun nterm-vt100-sm (char)
   "SM -- Set Mode - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "SM"))
   (if (nterm-vt100-set-mode
        nterm-vt100-mode nterm-vt100-mode-function t)
@@ -1781,7 +1796,8 @@ Returns t unless a switch to vt52 has occurred."
 
 (defun nterm-vt100-switch ()
   "Switch to vt100."
-  (use-local-map nterm-vt100-mode-map)
+  (if (not nterm-unit-testing)
+      (use-local-map nterm-vt100-mode-map))
   (setq nterm-dispatch 'nterm-vt100-primary-dispatch))
 
 (defun nterm-vt100-tab (char)
@@ -1795,7 +1811,7 @@ Returns t unless a switch to vt52 has occurred."
                 tab-col tab-width)) ; end loop
       (incf tab-col))
     (setq tab-col (if (= target-col -1) (- tab-width 1) target-col))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "TAB going to col=%d" tab-col))
     (nterm-cursor-col-set tab-col)))
 
@@ -1816,7 +1832,7 @@ Returns t unless a switch to vt52 has occurred."
 
 (defun nterm-vt100-tbc (char)
   "TBC -- Tabulation Clear - host to vt100"
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "TBC"))
   (let ((tbc-arg (car (nterm-argument-to-list 1 0)))
         (tabs (cdr (assq 'tab nterm-vt100-state))))
@@ -1829,7 +1845,9 @@ Returns t unless a switch to vt52 has occurred."
 (defun nterm-vt100-width ()
   "Return width of current line.
 It takes account of double width line"
-  (if (nterm-mem-line-dwl) (/ nterm-width 2) nterm-width))
+  (if nterm-dwl-exist
+      (if (nterm-mem-line-dwl) (/ nterm-width 2) nterm-width)
+    nterm-width))
 
 ;;; VT52 emulator
 (defvar nterm-vt52-state nil
@@ -2285,7 +2303,7 @@ The cursor is left at the end of the line."
 (defun nterm-vt52-cursor-down (char)
   "Cursor Down -- host to vt52."
   (let ((cud-line (+ (nterm-cursor-line-get) 1)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "vt52 cursor down"))
     (if (< cud-line nterm-height)
         (nterm-cursor-line-set cud-line)))
@@ -2294,7 +2312,7 @@ The cursor is left at the end of the line."
 (defun nterm-vt52-cursor-left (char)
   "CUB -- Cursor Backward -- host to vt52"
   (let ((cub-col (- (nterm-cursor-col-get) 1)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "vt52 cursor left"))
     (if (>= cub-col 0)
         (nterm-cursor-col-set cub-col)))
@@ -2303,7 +2321,7 @@ The cursor is left at the end of the line."
 (defun nterm-vt52-cursor-right (char)
   "Cursor Right -- host to vt52."
   (let ((cuf-col (+ (nterm-cursor-col-get) 1)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "vt52 cursor right"))
     (if (< cuf-col nterm-width)
         (nterm-cursor-col-set cuf-col)))
@@ -2312,7 +2330,7 @@ The cursor is left at the end of the line."
 (defun nterm-vt52-cursor-up (char)
   "Cursor Up -- host to vt52."
   (let ((cuu-line (- (nterm-cursor-line-get) 1)))
-    (if (aref nterm-debug nterm-debug-vt100)
+    (if nterm-debug-vt100
         (message "vt52 cursor up"))
     (if (<= cuu-line 0)
         (nterm-cursor-line-set cuu-line)))
@@ -2320,7 +2338,7 @@ The cursor is left at the end of the line."
 
 (defun nterm-vt52-enter-graphics (char)
   "Enter graphics mode -- host to vt52."
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "vt52 enter graphics mode"))
   (setcdr (assq 'charset nterm-vt52-state) nterm-vt52-charset-graphic)
   (nterm-vt52-escape-end char))
@@ -2328,7 +2346,7 @@ The cursor is left at the end of the line."
 (defun nterm-vt52-erase-to-end-of-screen (char)
   (let ((end-line (nterm-cursor-line-get))
         (end-position (nterm-cursor-position-get)))
-    (if (aref nterm-debug nterm-debug-vt52)
+    (if nterm-debug-vt52
         (message "vt 52 erase to end of screen"))
     (nterm-vt52-blank-line ?\s)     (incf end-line)
     (while (< end-line nterm-height)
@@ -2339,7 +2357,7 @@ The cursor is left at the end of the line."
   (nterm-vt52-escape-end char))
 
 (defun nterm-vt52-erase-to-end-of-line (char)
-  (if (aref nterm-debug nterm-debug-vt52)
+  (if nterm-debug-vt52
       (message "vt 52 erase to end of line"))
   (nterm-vt52-blank-line ?\s)
   ;; TBD   ?\s (nterm-cursor-line-get)  (- nterm-width (nterm-cursor-col-get)))
@@ -2354,14 +2372,14 @@ The cursor is left at the end of the line."
   (setq nterm-dispatch 'nterm-vt52-escape-dispatch))
 (defun nterm-vt52-escape-y-col (char)
   "Set column - host to vt52."
-  (if (aref nterm-debug nterm-debug-vt52)
+  (if nterm-debug-vt52
       (message "vt 52 ESC y set col"))
   (nterm-cursor-col-set (- char 32))
   (nterm-vt52-escape-end char))
 
 (defun nterm-vt52-escape-y-line (char)
   "Set line -- host to vt52"
-  (if (aref nterm-debug nterm-debug-vt52)
+  (if nterm-debug-vt52
       (message "vt 52 ESC y set line"))
   (nterm-cursor-line-set (- char 32))
   (setq nterm-dispatch 'nterm-vt52-escape-y-dispatch-col))
@@ -2372,7 +2390,7 @@ The cursor is left at the end of the line."
 
 (defun nterm-vt52-exit-graphics (char)
   "Exit graphics mode -- host to vt52."
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "vt52 exit graphics mode"))
   (setcdr (assq 'charset nterm-vt52-state) nterm-vt100-charset-normal)
   (nterm-vt52-escape-end char))
@@ -2396,7 +2414,7 @@ The cursor is left at the end of the line."
 
 (defun nterm-vt52-reverse-line-feed (char)
   "Reverse Line Feed -- host to vt52."
-  (if (aref nterm-debug nterm-debug-vt100)
+  (if nterm-debug-vt100
       (message "vt52 reverse line feed "))
   (if (= (nterm-cursor-line-get) 0)
       (nterm-scroll-down 0 nterm-height 'nterm-vt52-blank-line)
@@ -2404,12 +2422,13 @@ The cursor is left at the end of the line."
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt52-switch ()
-  (setq nterm-dispatch 'nterm-vt52-primary-dispatch)
+  (if (not nterm-unit-testing)
+      (setq nterm-dispatch 'nterm-vt52-primary-dispatch))
   (use-local-map nterm-vt52-mode-map))
 
 (defun nterm-vt52-identify (char)
   "Identify -- host to vt52"
-  (if (aref nterm-debug nterm-debug-vt52)
+  (if nterm-debug-vt52
       (message "vt 52 identify"))
   (nterm-send-string "\e/Z"))
 
@@ -2513,10 +2532,9 @@ TBD")
   (pop-to-buffer nterm-mem-buffer)
   (nterm-mem-mode))
 
-
 (defun nterm-mem-attribute ()
   "Return a cell of attribute."
-  (make-bool-vector 5 nil))
+  (make-bool-vector 6 nil))
 
 (defun nterm-mem-display-timer ()
   (if (get-buffer nterm-mem-buffer)
@@ -2539,11 +2557,16 @@ TBD")
   "Return a blank line attribute vector."
   (make-bool-vector 4 nil))
 
-(defun nterm-mem-line-dwl ()
-  "Returns t if current line is double width."
-  (or (nterm-mem-line-get nterm-vt100-line-decdwl)
-      (nterm-mem-line-get nterm-vt100-line-decdwl-bottom)
-      (nterm-mem-line-get nterm-vt100-line-decdwl-top)))
+(defun nterm-mem-line-dwl (&optional line)
+  "Returns t if LINE is double width.
+If LINE is not set use cursor line."
+  (if (not line)
+      (setq line (nterm-cursor-line-get)))
+  (let ((dwl-attr (nterm-mem-line-get line)))
+    (or (aref dwl-attr nterm-vt100-line-decdwl)
+        (aref dwl-attr nterm-vt100-line-decdwl-bottom )
+        (aref dwl-attr nterm-vt100-line-decdwl-top))))
+
 (defun nterm-mem-line-set (attribute bool)
   "Set BOOL in ATTRIBUTE of line memory at the cursor position."
   (aset (cdr (assq 'line-attr (nth (nterm-cursor-line-get) nterm-memory)))
@@ -2554,10 +2577,15 @@ TBD")
   (setcdr (assq 'line-attr (nth line nterm-memory))
           (nterm-mem-line-blank-attr)))
 
-(defun nterm-mem-line-get (attribute)
-  "Return ATTRIBUTE value of line memory at the cursor posiiton."
-  (aref (cdr (assq 'line-attr (nth (nterm-cursor-line-get) nterm-memory)))
-        attribute))
+(defun nterm-mem-line-get (line)
+  "Return attribute value at LINE"
+  (cdr (assq 'line-attr (nth line nterm-memory))))
+
+(defun nterm-mem-checksum ()
+  (with-temp-buffer
+    (nterm-mem-dump)
+    (md5 (current-buffer))))
+    
 (defun nterm-mem-vector-to-dec (vector)
   (let ((vector-index 0)
         (vector-base 1)
@@ -2630,7 +2658,6 @@ TBD")
       (incf record-index))
     (goto-char record-point)
     (set-buffer record-buf)))
-
 
 (defun nterm-record-step ()
   (interactive)
@@ -2781,14 +2808,7 @@ TBD")
 (provide 'nterm)
 
 ;;; Copyright crap
-;; Local Variables:
-;; compile-command: "make"
-;; End:
 
-;; Copyright (C) 2009 Ivan Kanis
-;; Author: Ivan Kanis
-;; 
-;;
 ;; This program is free software ; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation ; either version 2 of the License, or
