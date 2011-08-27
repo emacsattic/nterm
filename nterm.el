@@ -34,12 +34,11 @@
 ;;  - Double width character
 ;;  - Double height character
 
-;; Things that remains to be done:
+;; TODO
 ;; - fix line drawing single width characters
 ;; - bind C-c C-c to interrupt
 ;; - fix slow crolling
 ;; - fix buffer popping when changing cursor position
-;; - US and UK character set.
 ;; - ANSI color
 ;; - VT52 compatibility mode
 ;; - Copy and paste mechanism
@@ -221,7 +220,7 @@ Return DEFAULT is NUMER is 0"
       (while (< line nterm-height)
         (let ((assert-width
                (progn
-                 (goto-line (1+ line))
+                 (goto-char (point-min)) (forward-line (1- line))
                  (- (line-end-position) (point))))
               (assert-expected-width
                (if (nterm-mem-line-dwl line)
@@ -728,12 +727,32 @@ special characters starts at 95 and end at 126")
              g0-list))
   "United State character set")
 
-(defvar nterm-vt100-charset-table
-  '((nterm-vt100-charset-normal nterm-vt100-charset-special)
-    (nterm-vt100-charset-normal-double nterm-vt100-charset-special-double)
-    (nterm-vt100-charset-normal-top nterm-vt100-charset-special-top)
-    (nterm-vt100-charset-normal-bottom nterm-vt100-charset-special-bottom))
-  "Table of double width characters")
+(defvar nterm-vt100-charset-uk
+  (let ((charset (copy-sequence nterm-vt100-charset-normal)))
+    ;; # is uk pound sign
+    (aset charset 35 ?£)
+    charset))
+
+(defvar nterm-vt100-charset-normal-table
+  '(nterm-vt100-charset-normal
+    nterm-vt100-charset-normal-double
+    nterm-vt100-charset-normal-top
+    nterm-vt100-charset-normal-bottom)
+  "Table of normal characters")
+
+(defvar nterm-vt100-charset-special-table
+  '(nterm-vt100-charset-special
+    nterm-vt100-charset-special-double
+    nterm-vt100-charset-special-top
+    nterm-vt100-charset-special-bottom)
+  "Table of special characters")
+
+(defvar nterm-vt100-charset-uk-table
+  '(nterm-vt100-charset-uk
+    nterm-vt100-charset-uk-double
+    nterm-vt100-charset-uk-top
+    nterm-vt100-charset-uk-bottom)
+  "Table of special characters")
 
 (defvar nterm-vt100-color
   ;;  normal  bright
@@ -815,6 +834,8 @@ your liking.")
    ?# nterm-vt100-hash-start
    ?\( nterm-vt100-parenthesis-open-start
    ?\) nterm-vt100-parenthesis-close-start
+   ?* nterm-vt100-star-start
+   ?+ nterm-vt100-plus-start
    ?7 nterm-vt100-decsc
    ?8 nterm-vt100-decrc
    ?= nterm-vt100-deckpam
@@ -911,6 +932,24 @@ your liking.")
    ?2 nterm-vt100-scs-g1
    ?A nterm-vt100-scs-g1
    ?B nterm-vt100-scs-g1))
+
+(nterm-defdispatch ; Star dispatch ESC * of a vt100
+ '(nterm-vt100-star-dispatch
+   128 nterm-vt100-escape-end
+   ?0 nterm-vt100-scs-g2
+   ?1 nterm-vt100-scs-g2
+   ?2 nterm-vt100-scs-g2
+   ?A nterm-vt100-scs-g2
+   ?B nterm-vt100-scs-g2))
+
+(nterm-defdispatch ; Plus dispatch ESC + of a vt100
+ '(nterm-vt100-plus-dispatch
+   128 nterm-vt100-escape-end
+   ?0 nterm-vt100-scs-g3
+   ?1 nterm-vt100-scs-g3
+   ?2 nterm-vt100-scs-g3
+   ?A nterm-vt100-scs-g3
+   ?B nterm-vt100-scs-g3))
 
 (defun nterm-vt100-bel (char)
   "Bell."
@@ -1080,16 +1119,20 @@ TBD implement DECOM"
     (nterm-vt100-char-insert-blink insert-attribute insert-line-attribute)))
 
 (defun nterm-vt100-char-insert-table (attribute)
-  "TBD document"
-  (nth (if (aref attribute nterm-vt100-char-special) 1 0)
-       (nth (if nterm-dwl-exist
-                (let ((i-t-attr
-                       (nterm-mem-line-get (nterm-cursor-line-get))))
-                  (cond ((aref i-t-attr nterm-vt100-line-decdwl) 1)
-                        ((aref i-t-attr nterm-vt100-line-decdwl-top) 2)
-                        ((aref i-t-attr nterm-vt100-line-decdwl-bottom) 3)
-                        (t 0))) 0)
-            nterm-vt100-charset-table)))
+  "Return character table on a given memory attribute."
+  (let ((table (cond ((aref attribute nterm-vt100-char-special)
+                      nterm-vt100-charset-special-table)
+                     ((aref attribute nterm-vt100-char-uk)
+                      nterm-vt100-charset-uk-table)
+                     (t nterm-vt100-charset-normal-table)))
+        (index (if nterm-dwl-exist
+                   (let ((i-t-attr
+                          (nterm-mem-line-get (nterm-cursor-line-get))))
+                     (cond ((aref i-t-attr nterm-vt100-line-decdwl) 1)
+                           ((aref i-t-attr nterm-vt100-line-decdwl-top) 2)
+                           ((aref i-t-attr nterm-vt100-line-decdwl-bottom) 3)
+                           (t 0))) 0)))
+    (nth index table)))
 
 (defun nterm-vt100-char-insert-blink (attribute line-attr)
   "TBD document"
@@ -1347,10 +1390,11 @@ TBD implement"
 
 (defun nterm-vt100-el (char)
   "EL -- Erase In Line - host to vt100."
-  (if nterm-debug-vt100
-      (message "EL par=%d" el-number))
-  (nterm-vt100-el-ex (car (nterm-argument-to-list 1 0)) nil)
-  (nterm-vt100-escape-end char))
+  (let ((el-number (car (nterm-argument-to-list 1 0))))
+    (if nterm-debug-vt100
+        (message "EL par=%d" el-number))
+  (nterm-vt100-el-ex el-number nil)
+  (nterm-vt100-escape-end char)))
 
 (defun nterm-vt100-el-ex (el-ex-number el-ex-reset)
   "Erase line, used by ED and EL.
@@ -1632,6 +1676,9 @@ Returns 0 if set 1 otherwise"
 (defun nterm-vt100-parenthesis-close-start (char)
   (setq nterm-dispatch 'nterm-vt100-parenthesis-close-dispatch))
 
+(defun nterm-vt100-plus-start (char)
+  (setq nterm-dispatch 'nterm-vt100-plus-dispatch))
+
 (defun nterm-vt100-question-start (char)
   "Esape bracket question mark dispatch"
   (setq nterm-dispatch 'nterm-vt100-question-dispatch))
@@ -1671,9 +1718,9 @@ Home the cursor at the beginning."
       (nterm-vt100-escape-end char)))
 
 (defun nterm-vt100-scs-g0 (char)
-  "SCS -- Select Character Set G0- host to vt100"
+  "SCS -- Select Character Set G0 - host to vt100"
   (if nterm-debug-vt100
-      (message "SCS %c" char))
+      (message "SCS G0 %c" char))
   (setcar
    (cdr (assq 'charset nterm-vt100-state))
    (cond
@@ -1688,9 +1735,9 @@ Home the cursor at the beginning."
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-scs-g1 (char)
-  "SCS -- Select Character Set G0- host to vt100"
+  "SCS -- Select Character Set G1 - host to vt100"
   (if nterm-debug-vt100
-      (message "SCS %c" char))
+      (message "SCS G1 %c" char))
   (setcar
    (cddr (assq 'charset nterm-vt100-state))
    (cond
@@ -1702,6 +1749,18 @@ Home the cursor at the beginning."
     ;; TBD Alternate Character ROM Special Graphics
     ((eq char ?2) 'special)))
   (nterm-vt100-set-attribute)
+  (nterm-vt100-escape-end char))
+
+(defun nterm-vt100-scs-g2 (char)
+  "SCS -- Select Character Set G2 - host to vt100"
+  (if nterm-debug-vt100
+      (message "SCS G2 %c" char))
+  (nterm-vt100-escape-end char))
+
+(defun nterm-vt100-scs-g3 (char)
+  "SCS -- Select Character Set G2 - host to vt100"
+  (if nterm-debug-vt100
+      (message "SCS G3 %c" char))
   (nterm-vt100-escape-end char))
 
 (defun nterm-vt100-set-attribute ()
@@ -1793,6 +1852,9 @@ Returns t unless a switch to vt52 has occurred."
   (if (nterm-vt100-set-mode
        nterm-vt100-mode nterm-vt100-mode-function t)
       (nterm-vt100-escape-end char)))
+
+(defun nterm-vt100-star-start (char)
+  (setq nterm-dispatch 'nterm-vt100-star-dispatch))
 
 (defun nterm-vt100-switch ()
   "Switch to vt100."
@@ -2719,7 +2781,7 @@ If LINE is not set use cursor line."
         (parse-gobble-index 0)
         line-string line-binary)
     (while (< parse-index parse-end)
-      (goto-line parse-index)
+      (goto-char (point-min)) (forward-line (1- parse-index))
       (setq line-string (buffer-substring (point-at-bol) (point-at-eol)))
       (cond
        ((and (> (length line-string) 9)

@@ -517,6 +517,41 @@ It places the result in the kill ring."
 " ten characters of each flavour, and a rectangleof 5 x 4 "
 "A's filling the top left of the screen.Push <RETURN>"))))
 
+(ert-deftest nterm-vttest-3-1 ()
+  (should (nterm-ut
+"1008d38854351b8e0e06ab8b995e65bc" "f66e36acb4c92b5f5f37bb28798cf95e"
+(concat
+"[2J[?42l(B)B*B+B[1;"
+"10HSelected as G0 (with SI)[1;48HSelected as G1 (with SO))"
+"B(B[3;1H[1mCharacter set A (UK / national)[0m(A)B[4"
+";10H !\"#$%&'()*+,-./0123456789:;<=>?[5;10H@ABCDEFGHIJKLMNOP"
+"QRSTUVWXYZ[\]^_[6;10H`abcdefghijklmnopqrstuvwxyz{|}~)A(B"
+"[4;48H !\"#$%&'()*+,-./0123456789:;<=>?[5;48H@ABCDEFGHIJKL"
+"MNOPQRSTUVWXYZ[\]^_[6;48H`abcdefghijklmnopqrstuvwxyz{|}~)"
+"B(B[7;1H[1mCharacter set B (US ASCII)[0m(B)B[8;10H "
+"!\"#$%&'()*+,-./0123456789:;<=>?[9;10H@ABCDEFGHIJKLMNOPQRSTU"
+"VWXYZ[\]^_[10;10H`abcdefghijklmnopqrstuvwxyz{|}~)B(B[8"
+";48H !\"#$%&'()*+,-./0123456789:;<=>?[9;48H@ABCDEFGHIJKLMNOP"
+"QRSTUVWXYZ[\]^_[10;48H`abcdefghijklmnopqrstuvwxyz{|}~)B("
+"B[11;1H[1mCharacter set 0 (Special graphics and line draw"
+"ing)[0m(0)B[12;10H !\"#$%&'()*+,-./0123456789:;<=>?[13;"
+"10H@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_[14;10H`abcdefghijklmnop"
+"qrstuvwxyz{|}~)0(B[12;48H !\"#$%&'()*+,-./0123456789:;<="
+">?[13;48H@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_[14;48H`abcdefghi"
+"jklmnopqrstuvwxyz{|}~)B(B[15;1H[1mCharacter set 1 (Alt"
+"ernate character ROM standard characters)[0m(1)B[16;10H"
+" !\"#$%&'()*+,-./0123456789:;<=>?[17;10H@ABCDEFGHIJKLMNOPQRS"
+"TUVWXYZ[\]^_[18;10H`abcdefghijklmnopqrstuvwxyz{|}~)1(B"
+"[16;48H !\"#$%&'()*+,-./0123456789:;<=>?[17;48H@ABCDEFGHIJKL"
+"MNOPQRSTUVWXYZ[\]^_[18;48H`abcdefghijklmnopqrstuvwxyz{|}~"
+")B(B[19;1H[1mCharacter set 2 (Alternate character ROM sp"
+"ecial graphics)[0m(2)B[20;10H !\"#$%&'()*+,-./0123456789"
+":;<=>?[21;10H@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_[22;10H`abcde"
+"fghijklmnopqrstuvwxyz{|}~)2(B[20;48H !\"#$%&'()*+,-./012"
+"3456789:;<=>?[21;48H@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_[22;48"
+"H`abcdefghijklmnopqrstuvwxyz{|}~(B)B[24;1HThese are the"
+" installed character sets. Push <RETURN>"))))
+
 (ert-deftest nterm-vt100-ed-1 ()
   "Test VT100 ED partial delete."
   (should (nterm-ut

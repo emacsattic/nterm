@@ -1,18 +1,10 @@
 SRC = \
 nterm.el \
-nterm.el
+nterm-gr.el
 
-ELC = ${SRC:.el=.elc}
+AUTO_FILE = nterm-auto-load
 
-AUTOFILE = nterm-auto-load
-
-INSTALLDIR = ${HOME}/build/lisp/ivan
-
-all: $(ELC) $(AUTOFILE).elc
-
-$(AUTOFILE).el: $(SRC)
-	@$(EMACS) $(AUTOLOAD) $(SRC) 
-	@rm -f $(AUTOFILE).el~
+INSTALL_DIR = nterm
 
 include ../elisp.mk
 
