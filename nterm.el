@@ -6,7 +6,7 @@
 ;; Author: Ivan Kanis <look-for-me@your-favorite-search.engine>
 ;; Maintainer: Ivan Kanis <look-for-me@your-favorite-search.engine>
 ;; Created: 1 Oct 2009
-;; Version: 0.3
+;; Version: 0.4
 ;; Keywords: terminal shell
 
 ;; This file is not part of GNU Emacs.
@@ -15,10 +15,11 @@
 ;; Copyright is at the bottom of this file
 
 ;; Disclaimer: nterm is *alpha* software. It will blow up. Don't blame
-;; me, I warned you! A good terminal emulator architecture has display
-;; memory and a table of functions for each character coming in. I
-;; have been in the terminal emulation business for seven years so I
-;; ought to know.
+;; me, I warned you!
+
+;; A good terminal emulator architecture has display memory and a
+;; table of functions for each character coming in. I have been in the
+;; terminal emulation business for seven years so I ought to know.
 
 ;; Nterm is meant to be a full vt100 compatible terminal emulator. It
 ;; has the following features:
