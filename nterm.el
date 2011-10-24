@@ -1,12 +1,12 @@
 ;; -*-coding: utf-8 -*-
 ;;; nterm.el --- New TERMinal emulator
 
-;; Copyright (C) 2009, 2010 Ivan Kanis
+;; Copyright (C) 2009, 2010, 2011 Ivan Kanis
 
-;; Author: Ivan Kanis <look-for-me@your-favorite-search.engine>
-;; Maintainer: Ivan Kanis <look-for-me@your-favorite-search.engine>
+;; Author: Ivan Kanis <ivan.kanis@googlemail.com>
+;; Maintainer: Ivan Kanis <ivan.kanis@googlemail.com>
 ;; Created: 1 Oct 2009
-;; Version: 0.4
+;; Version: 0.5
 ;; Keywords: terminal shell
 
 ;; This file is not part of GNU Emacs.
@@ -21,7 +21,7 @@
 ;; table of functions for each character coming in. I have been in the
 ;; terminal emulation business for seven years so I ought to know.
 
-;; Nterm is meant to be a full vt100 compatible terminal emulator. It
+;; Nterm is a full vt100 compatible terminal emulator. It
 ;; has the following features:
 
 ;;  - G0 G1 switching with shift in and shift out
@@ -35,15 +35,25 @@
 ;;  - Double width character
 ;;  - Double height character
 
+;; Ultimately I would like to use nterm instead of xterm. There's a
+;; lot of work left to be done though.
+
+;; Drawing character are hard coded to be used with a 12x24 font. If
+;; you are a bit of an artist have a look at nterm-gr.el and submit an
+;; alternate graphic font that works for you, I will include it...
+
+;; I use the following font on Ubuntu:
+;; "-unknown-DejaVu Sans Mono-normal-normal-*-20-*-*-*-m-0-iso10646-1"
+
 ;; TODO
-;; - fix line drawing single width characters
 ;; - bind C-c C-c to interrupt
-;; - fix slow crolling
+;; - fix slow scrolling
 ;; - fix buffer popping when changing cursor position
 ;; - ANSI color
 ;; - VT52 compatibility mode
 ;; - Copy and paste mechanism
-;; - xterm emulator
+;; - xterm emulation
+;; - Unicode characters
 ;; - Directory tracking
 ;; - Handle multiple instance
 ;; - Look for TBD in this file for other things...
@@ -51,7 +61,7 @@
 ;; I think nterm is easier to maintain than term. One look at term's
 ;; term-emulate-terminal function should convince anyone that term
 ;; cannot be maintained anymore. Compare with nterm equivalent
-;; function nterm-emulate it is only 25 lines long.
+;; function nterm-emulate it is only 26 lines long.
 
 ;; It has a recording mode (f11) so that you can record and replay
 ;; traces. It has a terminal memory so that area of the terminal can
@@ -83,7 +93,6 @@
   (require 'cl)
   ;; Placate compiler
   (defvar nterm-dispatch)
-  (defvar nterm-process)
   (defvar nterm-argument)
   (defvar nterm-vt100-primary-dispatch)
   (defvar nterm-vt100-escape-dispatch)
@@ -117,8 +126,8 @@
     (while (<= char ?~)
       (if (not (eq char ?\s))
           (setq list (cons (cons char unicode) list)))
-      (incf char)
-      (incf unicode))
+      (setq char (+ char 1))
+      (setq unicode (+ unicode 1)))
     list)
   "Map single width character to unicode double width equivalent.")
 
@@ -200,7 +209,7 @@ It returns ARG-NUMBER of DEFAULT if arguments aren't enough"
                result-list
                (list (nterm-argument-default
                       (nth bracket-index bracket-list) default))))
-        (incf bracket-index)))
+        (setq bracket-index (+ bracket-index 1))))
     result-list))
 
 (defun nterm-argument-default (number default)
@@ -242,11 +251,11 @@ TBD pull nterm-vt100-* out of this function."
   (let ((reset-index 0))
     (while (< reset-index nterm-height)
       (setcar (nthcdr reset-index nterm-memory) (nterm-mem-line char))
-      (incf reset-index))
+      (setq reset-index (+ reset-index 1)))
     (setq reset-index 0)
     (while (< reset-index nterm-height)
       (nterm-vt100-line-draw reset-index)
-      (incf reset-index))))
+      (setq reset-index (+ reset-index 1)))))
 
 (defun nterm-cursor-position-get ()
   "Return CONS of cursor-position (line . col)."
@@ -328,7 +337,20 @@ TBD pull nterm-vt100-* out of this function."
             (funcall emulate-dispatch emulate-char)
             (if nterm-debug-emulator
                 (message "received 0x%x not handled" emulate-char))))
-        (incf emulate-index)))))
+        (setq emulate-index (+ emulate-index 1))))
+    (nterm-setup-unify-face)))
+
+(defun nterm-setup-unify-face ()
+  "Setup unify face idle timer if it doesn't exist."
+    (let ((suf-list timer-idle-list)
+          (suf-found nil))
+      (while suf-list
+        (when (string= "nterm-vt100-unify-face"
+                       (symbol-name (aref (car suf-list) 5)))
+          (setq suf-found t))
+        (setq suf-list (cdr suf-list)))
+      (when (not suf-found)
+        (run-with-idle-timer 1 nil 'nterm-vt100-unify-face))))
 
 (defun nterm-init ()
   (setq nterm-state
@@ -355,7 +377,7 @@ KEY-PAD list of keypad keys in application and numeric mode."
     (while (< key-index 128)
       (if (not (memq key-index nterm-key-preserve))
           (define-key key-keymap (vector key-index) key-function))
-      (incf key-index))
+      (setq key-index (+ key-index 1)))
     (while key-list
       (define-key key-keymap
         (read-kbd-macro (car key-list)) key-function)
@@ -381,7 +403,7 @@ KEY-PAD list of keypad keys in application and numeric mode."
   "Kill a line, don't push line in kill ring."
   (let ((kill-end (line-end-position)))
     (if (not (= kill-end (point-max)))
-        (incf kill-end))
+        (setq kill-end (+ kill-end 1)))
     (delete-region (point) kill-end )))
 
 (defun nterm-mode ()
@@ -392,14 +414,12 @@ Entry to this mode runs the hooks on `nterm-mode-hook'."
   (when (not nterm-unit-testing)
       (pop-to-buffer nterm-buffer-name)
       (kill-all-local-variables)
-      (set (make-local-variable 'nterm-process)
-           (get-buffer-process (current-buffer)))
       (setq mode-name "nterm")
       (setq major-mode 'nterm-mode))
   (with-current-buffer nterm-buffer-name
     (set (make-local-variable 'nterm-argument) "")
     (setq truncate-lines t)
-    (buffer-disable-undo nil))
+    (buffer-disable-undo))
   (nterm-init)
   (nterm-vt52-init)
   (nterm-vt100-init)
@@ -461,7 +481,7 @@ Use BLANK-LINE-FUNCTION to insert a blank line."
 
 (defun nterm-send-string (string)
   "Send STRING to host."
-  (process-send-string nterm-process string))
+  (process-send-string (get-buffer-process (current-buffer)) string))
 
 ;;; ANSI
 (defvar nterm-ansi-mode (make-bool-vector 21 nil))
@@ -630,109 +650,6 @@ If COPY is t copy parameter"
     nil                 ; 10 DECKPAM Keypad Application
     ]
   "List of meanings of vt100 modes.")
-
-(defvar nterm-vt100-c0
-  [ ?\x00 ; NUL
-    nil
-    nil
-    ?\x03 ; ETX
-    ?\x04 ; EOT
-    ?\x05 ; ENQ
-    nil
-    ?\x07 ; BEL
-    ?\x08 ; BS
-    ?\x09 ; HT
-    ?\x0a ; LF
-    ?\x0b ; VT
-    ?\x0c ; FF
-    ?\x0d ; CR
-    ?\x0e ; SO
-    ?\x0f ; SI
-    nil
-    ?\x11 ; DC1 (XON)
-    nil
-    ?\x13 ; DC2 (XOFF)
-    nil
-    nil
-    nil
-    nil
-    ?\x18 ; CAN
-    nil
-    ?\x1a ; SUB
-    ?\x1b ; ESC
-    nil
-    nil
-    nil
-    nil ]
-  "vt100 C0 character set, nil means character is not used")
-
-(defvar nterm-vt100-charset-special
-  (vconcat
-   nterm-vt100-c0
-   (let ((start ?\s)
-         (end ??)
-         (index 0)
-         (vec (make-vector 63 nil)))
-     (while (< index end)
-       (aset vec index start)
-       (incf start)
-       (incf index))
-     vec)
-   [ ?\s ; Blank
-     ?♦ ; Diamond
-     ?▒ ; Checkerboard (error indication)
-     ?␉ ; Horizontal tab
-     ?␌ ; Form feed
-     ?␍ ; Carriage return
-     ?␊ ; Linefeed
-     ?° ; Degree symbol
-     ?± ; Plus/minus
-     ?␤ ; New line
-     ?␋ ; Vertical tab
-     ?┘ ; Lower-right corner
-     ?┐; Upper-right corner
-     ?┌ ; Upper-left corner
-     ?└ ; Lower-left corner
-     ?┼ ; Crossing lines
-     ?⎺ ; Horizontal line scan 1
-     ?⎻ ; Horizontal line scan 3
-     ?─ ; Horizontal line scan 5
-     ?⎼ ; Horizontal line scan 7
-     ?⎽; Horizontal line scan 9
-     ?├ ; Left T
-     ?┤ ; Right T
-     ?┴ ; Bottom T
-     ?┬ ; Top T
-     ?│ ; Vertical bar
-     ?≤ ; Less than or equal to
-     ?≥ ; Greater than or equal to
-     ?π ; Pi
-     ?≠ ; Not equal to
-     ?£ ; UK pound sign
-     ?· ; Centered dot
-     ?\s ; delete
-     ])
-  " Special Characters and Line Drawing
-http://www.vt100.net/docs/vt102-ug/table5-15.html
-special characters starts at 95 and end at 126")
-
-(defvar nterm-vt100-charset-normal
-  (vconcat nterm-vt100-c0
-           (let ((g0-index 0)
-                 (g0-list (make-vector 96 nil)))
-             (while (< g0-index 95)
-               (aset g0-list g0-index (+ ?\s g0-index))
-               (incf g0-index))
-             ;; map delete to space
-             (aset g0-list 95 ?\s)
-             g0-list))
-  "United State character set")
-
-(defvar nterm-vt100-charset-uk
-  (let ((charset (copy-sequence nterm-vt100-charset-normal)))
-    ;; # is uk pound sign
-    (aset charset 35 ?£)
-    charset))
 
 (defvar nterm-vt100-charset-normal-table
   '(nterm-vt100-charset-normal
@@ -952,6 +869,197 @@ your liking.")
    ?A nterm-vt100-scs-g3
    ?B nterm-vt100-scs-g3))
 
+;;; Drawing routine
+(defun nterm-vt100-char-insert (char &optional replace)
+  "Insert character, with face property."
+  (let* ((insert-line (nterm-cursor-line-get))
+         (insert-col (nterm-cursor-col-get))
+         (insert-line-attribute
+          (cdr (assq 'line-attr
+                     (nth insert-line nterm-memory))))
+         (insert-mem-char (cdr (assq 'char (nth insert-line nterm-memory))))
+         (insert-mem-attribute
+          (cdr (assq 'attr (nth insert-line nterm-memory))))
+         (insert-attribute (cdr (assq 'attribute nterm-vt100-state)))
+         (insert-table (nterm-vt100-char-insert-table insert-attribute))
+         (insert-char-table (eval (car insert-table)))
+         (insert-width (if (cdr insert-table) 24 12))
+         (insert-char (if (< char (length insert-char-table))
+                          (aref insert-char-table char))))
+    (if insert-char
+        (progn
+          (nterm-cursor-position-set (cons insert-line insert-col))
+          (aset insert-mem-char insert-col char)
+          (aset insert-mem-attribute insert-col
+                (copy-sequence insert-attribute))
+          (if replace
+              (delete-char 1))
+          (cond ((stringp insert-char)
+                 (nterm-insert-image
+                  insert-char insert-width 24
+                  (cdr (assq 'background nterm-vt100-state))
+                  (cdr (assq 'foreground nterm-vt100-state))))
+                ((characterp insert-char)
+                 (insert (char-to-string insert-char))
+                 (put-text-property (- (point) 1) (point) 'face
+                                    (cdr (assq 'face nterm-vt100-state)))))
+          (nterm-vt100-cuf ?\s)))
+    (nterm-vt100-char-insert-blink insert-attribute insert-line-attribute)))
+
+(defun nterm-vt100-char-insert-table (attribute)
+  "Return character table on a given memory attribute."
+  (let ((table (cond ((aref attribute nterm-vt100-char-special)
+                      nterm-vt100-charset-special-table)
+                     ((aref attribute nterm-vt100-char-uk)
+                      nterm-vt100-charset-uk-table)
+                     (t nterm-vt100-charset-normal-table)))
+        (index (if nterm-dwl-exist
+                   (let ((i-t-attr
+                          (nterm-mem-line-get (nterm-cursor-line-get))))
+                     (cond ((aref i-t-attr nterm-vt100-line-decdwl) 1)
+                           ((aref i-t-attr nterm-vt100-line-decdwl-top) 2)
+                           ((aref i-t-attr nterm-vt100-line-decdwl-bottom) 3)
+                           (t 0))) 0)))
+    (cons (nth index table) (> index 0))))
+
+(defun nterm-vt100-char-insert-blink (attribute line-attr)
+  "Handle insertion of a character with blink attribute."
+  (if (aref attribute nterm-vt100-char-blink)
+      (progn
+        (aset line-attr nterm-vt100-line-blink t)
+        (if (and nterm-blink-time
+                 (not (cdr (assq 'blink-timer nterm-vt100-state))))
+            (setcdr (assq 'blink-timer nterm-vt100-state)
+                    (run-at-time nil nterm-blink-time
+                                 'nterm-vt100-blink-screen))))))
+
+(defun nterm-vt100-line-draw (&optional line)
+  "Draw LINE from terminal memory."
+  (with-current-buffer nterm-buffer-name
+    (or line
+        (setq line (nterm-cursor-line-get)))
+    (let ((draw-index 0)
+          (draw-cur (nterm-cursor-position-get)))
+      (nterm-cursor-position-set (cons line 0))
+      (nterm-kill-line)
+      (let* ((draw-dwl (nterm-mem-line-dwl))
+             (draw-end (nterm-vt100-width)))
+        (while (< draw-index draw-end)
+          (let ((res (nterm-vt100-line-draw-attribute
+                      line draw-index draw-dwl)))
+            (if draw-dwl
+                (nterm-vt100-line-draw-dwl res)
+              (let ((draw-char (cdr (assq 'char res))))
+                (if (stringp draw-char)
+                    (nterm-insert-image
+                     draw-char 12 24
+                     (cdr (assq 'background res))
+                     (cdr (assq 'foreground res)))
+                  (insert draw-char)
+                  (remove-text-properties (- (point) 1) (point) '(face))
+                  (put-text-property (- (point) 1) (point) 'face
+                                     (cdr (assq 'face res)))))))
+          (setq draw-index (+ draw-index 1))))
+      (insert "\n")
+      (nterm-cursor-position-set draw-cur))))
+
+(defun nterm-vt100-line-draw-attribute (line draw-index draw-dwl)
+  "TBD document me."
+  (let* ((draw-attribute
+          (aref (cdr (assq 'attr (nth line nterm-memory))) draw-index))
+         (draw-char-table
+          (eval (car (nterm-vt100-char-insert-table draw-attribute))))
+         (char (aref (cdr (assq 'char (nth line nterm-memory))) draw-index))
+         (draw-char (if (< char (length draw-char-table))
+                        (aref draw-char-table char)))
+         (draw-face (nterm-vt100-face-default))
+         (draw-background
+          (car (nth (nterm-vt100-mode-decscnm-0) nterm-vt100-color)))
+         (draw-foreground
+          (car (nth (nterm-vt100-mode-decscnm-1) nterm-vt100-color))))
+    (if (aref draw-attribute nterm-vt100-char-underline)
+        (nterm-face-underline draw-face))
+    (if (and (aref draw-attribute nterm-vt100-char-blink)
+             (cdr (assq 'blink nterm-vt100-state)))
+        (setq draw-face (nterm-vt100-face-default)
+              draw-char (if draw-dwl (aref draw-char-table 32) ?\s)))
+    (if (aref draw-attribute nterm-vt100-char-bright)
+        (nterm-face-bright draw-face draw-foreground))
+    (if (aref draw-attribute nterm-vt100-char-reverse)
+        (nterm-face-reverse
+         draw-face
+         (aref draw-attribute nterm-vt100-char-bright)
+         draw-foreground draw-background))
+    (list (cons 'face draw-face)
+          (cons 'char draw-char)
+          (cons 'foreground draw-foreground)
+          (cons 'background draw-background)
+          (cons 'attribute draw-attribute))))
+
+(defun nterm-vt100-line-draw-dwl (res)
+  "Draw double width LINE from terminal memory."
+  (nterm-insert-image (cdr (assq 'char res)) 24 24
+                      (cdr (assq 'background res))
+                      (cdr (assq 'foreground res))))
+
+
+(defun nterm-vt100-unify-face ()
+  "Go through the entire buffer and unify face.
+This is because using a different face on each character slows
+the input noticeably."
+  (with-current-buffer nterm-buffer-name
+    (when (not nterm-dwl-exist)
+      (let* ((uf-point-begin (point-min))
+             (uf-point-index uf-point-begin)
+             (uf-line 0)
+             (uf-col 0)
+             (uf-attr-line (cdr (assq 'attr (nth uf-line nterm-memory)))))
+        (while (< uf-line nterm-height)
+          (while (< uf-col nterm-width)
+            (when (not (nterm-compare-vector-array
+                        (aref uf-attr-line uf-col)
+                        (if (not (= uf-col (- nterm-width 1)))
+                            (aref uf-attr-line (1+ uf-col))
+                          (if (= uf-line (- nterm-height 1))
+                              ;; last line on last character, do nothing
+                              []
+                            ;; compare with first char of next row
+                            (setq
+                             uf-attr-line
+                             (cdr (assq 'attr
+                                        (nth (1+ uf-line) nterm-memory))))
+                            (aref uf-attr-line 0)))))
+              (nterm-put-text-property
+               uf-line uf-col uf-point-begin uf-point-index)
+              (setq uf-point-begin (1+ uf-point-index)))
+            (setq uf-point-index (1+ uf-point-index)
+                  uf-col (1+ uf-col)))
+          (setq uf-point-index (1+ uf-point-index)
+                uf-line (1+ uf-line)
+                uf-col 0))
+        (nterm-put-text-property
+         (- uf-line 1) (- nterm-width 1) uf-point-begin uf-point-index)))))
+
+(defun nterm-put-text-property (ptp-line ptp-col ptp-start ptp-end)
+  "Apply property from PTP_START to PTP_END.
+PTP-LINE and PTP-COL are used to retrieve attribute face."
+  (remove-text-properties ptp-start ptp-end '(face))
+  (put-text-property
+   ptp-start ptp-end 'face
+   (cdr (assq 'face (nterm-vt100-line-draw-attribute
+                     ptp-line ptp-col nil)))))
+
+(defun nterm-compare-vector-array (a b)
+  "Return t if vector array A and B are identical."
+  (let ((ca-length (length a))
+        (ca-count 0))
+    (when (= ca-length (length b))
+      (while (and (< ca-count ca-length)
+                  (eq (aref a ca-count) (aref b ca-count)))
+        (setq ca-count (+ ca-count 1))))
+    (= ca-count ca-length)))
+
+;;; VT100 commands
 (defun nterm-vt100-bel (char)
   "Bell."
   (ding))
@@ -969,7 +1077,7 @@ on the line. If RESET is non nil reset line attribute."
       (aset (cdr (assq 'char (nth bl-line nterm-memory))) bl-index ?\s)
       (aset (cdr (assq 'attr (nth bl-line nterm-memory)))
             bl-index (nterm-mem-attribute))
-      (incf bl-index)))
+      (setq bl-index (+ bl-index 1))))
   (nterm-vt100-line-draw bl-line))
 
 (defun nterm-vt100-blink-screen ()
@@ -986,14 +1094,15 @@ on the line. If RESET is non nil reset line attribute."
             (progn
               (nterm-vt100-line-draw blink-index)
               (setq blink-exist t)))
-        (incf blink-index))
-      (if (not blink-exist)
-          (let ((list timer-list))
-            (while list
-              (let ((elt (pop list)))
-                (when (equal (symbol-name (aref elt 5))
-                             "nterm-vt100-blink-screen")
-                  (cancel-timer elt)))))))))
+        (setq blink-index (+ blink-index 1)))
+      (when (not blink-exist)
+        (setcdr (assq 'blink-timer nterm-vt100-state) nil)
+        (let ((blink-list timer-list))
+          (while blink-list
+            (when (string= (symbol-name (aref (car blink-list) 5))
+                           "nterm-vt100-blink-screen")
+              (cancel-timer (car blink-list)))
+            (setq blink-list (cdr blink-list))))))))
 
 (defun nterm-vt100-bracket-start (char)
   "Escape bracket dispatch"
@@ -1083,68 +1192,6 @@ TBD implement DECOM"
         (setq cuu-line cuu-top))
     (nterm-cursor-line-set cuu-line))
   (nterm-vt100-escape-end char))
-
-(defun nterm-vt100-char-insert (char &optional replace)
-  "Insert character, with face property."
-  (let* ((insert-line (nterm-cursor-line-get))
-         (insert-col (nterm-cursor-col-get))
-         (insert-line-attribute
-          (cdr (assq 'line-attr
-                     (nth insert-line nterm-memory))))
-         (insert-mem-char (cdr (assq 'char (nth insert-line nterm-memory))))
-         (insert-mem-attribute
-          (cdr (assq 'attr (nth insert-line nterm-memory))))
-         (insert-attribute (cdr (assq 'attribute nterm-vt100-state)))
-         (insert-char-table (eval (nterm-vt100-char-insert-table
-                                   insert-attribute)))
-         (insert-char (if (< char (length insert-char-table))
-                          (aref insert-char-table char))))
-    (if insert-char
-        (progn
-          (nterm-cursor-position-set (cons insert-line insert-col))
-          (aset insert-mem-char insert-col char)
-          (aset insert-mem-attribute insert-col
-                (copy-sequence insert-attribute))
-          (if replace
-              (delete-char 1))
-          (cond ((stringp insert-char)
-                 (nterm-insert-image
-                  insert-char 24 24
-                  (cdr (assq 'background nterm-vt100-state))
-                  (cdr (assq 'foreground nterm-vt100-state))))
-                ((characterp insert-char)
-                 (insert (char-to-string insert-char))
-                 (put-text-property (- (point) 1) (point) 'face
-                                    (cdr (assq 'face nterm-vt100-state)))))
-          (nterm-vt100-cuf ?\s)))
-    (nterm-vt100-char-insert-blink insert-attribute insert-line-attribute)))
-
-(defun nterm-vt100-char-insert-table (attribute)
-  "Return character table on a given memory attribute."
-  (let ((table (cond ((aref attribute nterm-vt100-char-special)
-                      nterm-vt100-charset-special-table)
-                     ((aref attribute nterm-vt100-char-uk)
-                      nterm-vt100-charset-uk-table)
-                     (t nterm-vt100-charset-normal-table)))
-        (index (if nterm-dwl-exist
-                   (let ((i-t-attr
-                          (nterm-mem-line-get (nterm-cursor-line-get))))
-                     (cond ((aref i-t-attr nterm-vt100-line-decdwl) 1)
-                           ((aref i-t-attr nterm-vt100-line-decdwl-top) 2)
-                           ((aref i-t-attr nterm-vt100-line-decdwl-bottom) 3)
-                           (t 0))) 0)))
-    (nth index table)))
-
-(defun nterm-vt100-char-insert-blink (attribute line-attr)
-  "TBD document"
-  (if (aref attribute nterm-vt100-char-blink)
-      (progn
-        (aset line-attr nterm-vt100-line-blink t)
-        (if (and nterm-blink-time
-                 (not (cdr (assq 'blink-timer nterm-vt100-state))))
-            (setcdr (assq 'blink-timer nterm-vt100-state)
-                    (run-at-time nil nterm-blink-time
-                                 'nterm-vt100-blink-screen))))))
 
 (defun nterm-vt100-char-self (char)
   "Insert character from output.
@@ -1320,7 +1367,7 @@ TBD implement"
   (let ((scnm-index 0))
     (while (< scnm-index nterm-height)
       (nterm-vt100-line-draw scnm-index)
-      (incf scnm-index))))
+      (setq scnm-index (+ scnm-index 1)))))
 
 (defun nterm-vt100-decstbm (char)
   "DECSTBM -- Set Top and Bottom Margins (DEC Private) - host to vt100"
@@ -1571,68 +1618,6 @@ TBD handle DECOM"
          (cdr (assq 'bottom-margin nterm-vt100-state))
          'nterm-vt100-line-draw)
       (nterm-cursor-line-set (+ lf-line 1)))))
-
-(defun nterm-vt100-line-draw (&optional line)
-  "Draw LINE from terminal memory."
-  (with-current-buffer nterm-buffer-name
-    (or line
-        (setq line (nterm-cursor-line-get)))
-    (let ((draw-index 0)
-          (draw-cur (nterm-cursor-position-get)))
-      (nterm-cursor-position-set (cons line 0))
-      (nterm-kill-line)
-      (let* ((draw-dwl (nterm-mem-line-dwl))
-             (draw-end (nterm-vt100-width)))
-        (while (< draw-index draw-end)
-          (let ((res (nterm-vt100-line-draw-attribute
-                      line draw-index draw-dwl)))
-            (if draw-dwl
-                (nterm-vt100-line-draw-dwl res)
-              (insert (cdr (assq 'char res)))
-              (remove-text-properties (- (point) 1) (point) '(face))
-              (put-text-property (- (point) 1) (point) 'face
-                                 (cdr (assq 'face res)))))
-          (incf draw-index)))
-      (insert "\n")
-      (nterm-cursor-position-set draw-cur))))
-
-(defun nterm-vt100-line-draw-attribute (line draw-index draw-dwl)
-  "TBD document me."
-  (let* ((draw-attribute
-          (aref (cdr (assq 'attr (nth line nterm-memory))) draw-index))
-         (draw-char-table (eval (nterm-vt100-char-insert-table draw-attribute)))
-         (char (aref (cdr (assq 'char (nth line nterm-memory))) draw-index))
-         (draw-char (if (< char (length draw-char-table))
-                        (aref draw-char-table char)))
-         (draw-face (nterm-vt100-face-default))
-         (draw-background
-          (car (nth (nterm-vt100-mode-decscnm-0) nterm-vt100-color)))
-         (draw-foreground
-          (car (nth (nterm-vt100-mode-decscnm-1) nterm-vt100-color))))
-    (if (aref draw-attribute nterm-vt100-char-underline)
-        (nterm-face-underline draw-face))
-    (if (and (aref draw-attribute nterm-vt100-char-blink)
-             (cdr (assq 'blink nterm-vt100-state)))
-        (setq draw-face (nterm-vt100-face-default)
-              draw-char (if draw-dwl ?\s " ")))
-    (if (aref draw-attribute nterm-vt100-char-bright)
-        (nterm-face-bright draw-face draw-foreground))
-    (if (aref draw-attribute nterm-vt100-char-reverse)
-        (nterm-face-reverse
-         draw-face
-         (aref draw-attribute nterm-vt100-char-bright)
-         draw-foreground draw-background))
-    (list (cons 'face draw-face)
-          (cons 'char draw-char)
-          (cons 'foreground draw-foreground)
-          (cons 'background draw-background)
-          (cons 'attribute draw-attribute))))
-
-(defun nterm-vt100-line-draw-dwl (res)
-  "Draw double width LINE from terminal memory."
-  (nterm-insert-image (cdr (assq 'char res)) 24 24
-                      (cdr (assq 'background res))
-                      (cdr (assq 'foreground res))))
 
 (defun nterm-vt100-mode-decawm ()
   "Returns DECAWM mode"
@@ -2530,12 +2515,12 @@ TBD")
       (insert " ")
       (insert
        (if (aref (cdr (assq 'tab nterm-vt100-state)) mem-col) "*" " "))
-      (incf mem-col))
+      (setq mem-col (+ mem-col 1)))
     (insert "\nCoA")
     (setq mem-col 0)
     (while (< mem-col nterm-width)
       (insert (format "%02d" mem-col))
-      (incf mem-col))
+      (setq mem-col (+ mem-col 1)))
     (insert "\n")))
 
 (defun nterm-mem-dump ()
@@ -2553,7 +2538,7 @@ TBD")
            (cdr (assq 'line-attr (nth dump-line nterm-memory))))))
         (nterm-mem-dump-line dump-line 'char "C")
         (nterm-mem-dump-line dump-line 'attr "   A")
-        (incf dump-line)))
+        (setq dump-line (+ dump-line 1))))
     (goto-char point)))
 
 (defun nterm-mem-debug-char-toggle ()
@@ -2575,7 +2560,7 @@ TBD")
           ((eq what 'char)
            (format (if nterm-mem-debug-char " %c" "%2x") dump-cell))
           (t (error "Wrong what %S" what))))
-        (incf dump-col)))
+        (setq dump-col (+ dump-col 1))))
     (insert "\n")))
 
 (defun nterm-mem-mode ()
@@ -2591,6 +2576,7 @@ TBD")
   (interactive)
   (run-at-time nil nterm-mem-time 'nterm-mem-display-timer)
   (with-current-buffer (get-buffer-create nterm-mem-buffer)
+    (buffer-disable-undo)
     (nterm-mem-dump))
   (pop-to-buffer nterm-mem-buffer)
   (nterm-mem-mode))
@@ -2658,7 +2644,7 @@ If LINE is not set use cursor line."
       (if (aref vector vector-index)
           (setq vector-result (+ vector-result vector-base)))
       (setq vector-base (* vector-base 2))
-      (incf vector-index))
+      (setq vector-index (+ vector-index 1)))
     vector-result))
 
 ;; Recorder

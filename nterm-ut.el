@@ -491,7 +491,7 @@ It places the result in the kill ring."
 
 (ert-deftest nterm-vttest-2-14 ()
   (should (nterm-ut
-"def090a2fe1a7a51c953ce8dd4a10343" "2f37168f73de511effd3f6d40b7b0e63"
+"8c26f608afa218d6d30c77e11625727b" "2f37168f73de511effd3f6d40b7b0e63"
  (concat
 "[?5l[2J[8;12Hnormal[8;24Hb"
 "old[8;36Hunderscored[8;48Hblinking[8;60Hreversed[10;1Hst"
@@ -519,7 +519,7 @@ It places the result in the kill ring."
 
 (ert-deftest nterm-vttest-3-1 ()
   (should (nterm-ut
-"1008d38854351b8e0e06ab8b995e65bc" "f66e36acb4c92b5f5f37bb28798cf95e"
+"18b51dfa49588dc112ce67c1e94a1e13" "f66e36acb4c92b5f5f37bb28798cf95e"
 (concat
 "[2J[?42l(B)B*B+B[1;"
 "10HSelected as G0 (with SI)[1;48HSelected as G1 (with SO))"
