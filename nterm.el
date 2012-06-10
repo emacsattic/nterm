@@ -104,6 +104,10 @@
 
 (require 'nterm-gr)
 
+
+(defvar nterm-scala-repl-compatability nil
+  "Emulate xterm's behavior with the Scala REPL")
+
 (defvar nterm-mode-hook nil
   "Hook run when entering nterm mode.")
 
@@ -480,8 +484,30 @@ Use BLANK-LINE-FUNCTION to insert a blank line."
     (nterm-cursor-position-set down-pos)))
 
 (defun nterm-send-string (string)
+
   "Send STRING to host."
-  (process-send-string (get-buffer-process (current-buffer)) string))
+
+;;  ( message "Last type: %s" ( type-of string) )
+;;  ( message "As List: %s" ( string-to-list string) )
+;;  ( message "Sending %s" string )
+
+      (if 
+	  ( and
+	      (equal string  ( apply 'string '( 127 ) ))  
+	      'nterm-scala-repl-compatability
+          )
+
+
+	;;  Brute force kluge:  convert ascii 127 to 8 when talking to Scala REPL
+
+	(process-send-string (get-buffer-process (current-buffer)) (apply 'string '(8)  ))
+
+	(process-send-string (get-buffer-process (current-buffer)) string)
+     )
+
+)
+
+
 
 ;;; ANSI
 (defvar nterm-ansi-mode (make-bool-vector 21 nil))
@@ -791,6 +817,7 @@ your liking.")
    ?B nterm-vt100-cud
    ?C nterm-vt100-cuf
    ?D nterm-vt100-cub
+   ?G nterm-vt100-cha
    ?H nterm-vt100-cup
    ?J nterm-vt100-ed
    ?K nterm-vt100-el
@@ -1164,6 +1191,20 @@ TBD implement DECOM"
     (nterm-cursor-col-set cuf-col))
   (nterm-vt100-escape-end char))
 
+(defun nterm-vt100-cha (char)
+  "CUF -- Cursor Horizontal Absolute -- host to vt100"
+  (let* ((cha-number (car (nterm-argument-to-list 1 1)))
+         (cha-col (+ -1 cha-number))
+         (cha-width (- (nterm-vt100-width) 1)))
+    (if nterm-debug-vt100
+        (message "CHA %d" cha-number))
+    (if (> cha-col cha-width)
+        (setq ccha-col cha-width))
+    (nterm-cursor-col-set cha-col))
+  (nterm-vt100-escape-end char))
+
+
+
 (defun nterm-vt100-cup (char)
   "CUP -- Cursor Position -- host to vt100"
   (let* ((cup-list (nterm-argument-to-list 2 1))
@@ -1519,6 +1560,9 @@ TBD handle DECOM"
 (defun nterm-vt100-key ()
   "Insert last typed char and send it to the process."
   (interactive)
+  
+
+
   (if (symbolp last-input-event)
       (cond ((eq last-input-event 'return)
              (nterm-send-string "\r"))
@@ -2871,3 +2915,4 @@ If LINE is not set use cursor line."
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program ; if not, write to the Free Software
 ;; Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+1
